@@ -36,7 +36,9 @@ By my own estimation, I think I understand these things and any mistakes are
 likely to be relatively minor.
 
 std::thread
+
 std::mutex
+
 std::lock
 
 ## Do Not Understand
@@ -46,4 +48,7 @@ them, but I feel like I NEED to learn them (though maybe this project isn't
 ideal for doing so).
 
 emplacement
+
 copy/move semantics
+
+best practices when it comes to naming, etc. I've been tainted by other-languages

@@ -2,6 +2,11 @@
 
 #include <iostream>
 
+/**
+ * TODO: The three handlers can share some code. I am not consolidating them
+ *       YET because I need to work out how to make the queues do priorities
+ *       correctly. Once that's done I can start consolidating.
+ */
 void hi_handler(
     std::mutex *mutex,
     std::condition_variable *condition_variable,
