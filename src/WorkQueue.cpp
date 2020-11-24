@@ -102,7 +102,6 @@ void hi_handler(
     int thread_id
 ) {
     std::unique_lock<std::mutex> lock(*mutex);
-    count_available_mutex->unlock();
 
     while (true) {
         // NOTE: Because we use the predicate here, if our queue only has a
