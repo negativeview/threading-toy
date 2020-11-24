@@ -2,6 +2,92 @@
 
 #include <iostream>
 
+WorkQueuePriority::WorkQueuePriority(
+    std::function<
+        void(
+            std::mutex *,
+            std::condition_variable *,
+            std::deque<std::function<void(void)>> *,
+            std::mutex *,
+            int *,
+            int
+        )
+    > handler,
+    int number
+) {
+    this->queue = new std::deque<std::function<void(void)>>();
+
+    this->count_available = number;
+    for (int i = 0; i < number; i++) {
+        this->threads.emplace_back(
+            new std::thread(
+                std::bind(
+                    handler,
+                    &this->queue_mutex,
+                    &this->condition,
+                    this->queue,
+                    &this->count_available_mutex,
+                    &this->count_available,
+                    i
+                )
+            )
+        );
+    }
+}
+
+std::string WorkQueuePriority::debug() {
+    std::string out;
+    out += "Count: ";
+
+    std::unique_lock<std::mutex> lock(this->count_available_mutex);
+    out += std::to_string(this->count_available);
+
+    return out;
+}
+
+bool WorkQueuePriority::addWork(std::function<void(void)> work, bool force) {
+    this->count_available_mutex.lock();
+    if (this->count_available > 0) {
+        this->queue_mutex.lock();
+        if (this->queue->size() < this->count_available) {
+            this->queue_mutex.unlock();
+            this->count_available_mutex.unlock();
+
+            this->addWork(work);
+
+            return true;
+        }
+
+        this->queue_mutex.unlock();
+        this->count_available_mutex.unlock();
+
+        return false;
+    }
+    this->count_available_mutex.unlock();
+
+    if (force) {
+        this->addWork(work);
+    }
+
+    return false;
+}
+
+void WorkQueuePriority::addWork(std::function<void(void)> work) {
+    std::unique_lock<std::mutex> lock(this->queue_mutex);
+
+    this->queue->emplace_back(work);
+    lock.unlock();
+
+    this->condition.notify_one();
+}
+
+WorkQueuePriority::~WorkQueuePriority() {
+    for (auto &thread: this->threads) {
+        thread->join();
+        delete thread;
+    }
+}
+
 /**
  * TODO: The three handlers can share some code. I am not consolidating them
  *       YET because I need to work out how to make the queues do priorities
@@ -11,11 +97,12 @@ void hi_handler(
     std::mutex *mutex,
     std::condition_variable *condition_variable,
     std::deque<std::function<void(void)>> *queue,
+    std::mutex *count_available_mutex,
+    int *count_available,
     int thread_id
 ) {
-    std::cout << "Starting high thread " << thread_id << std::endl;
-
     std::unique_lock<std::mutex> lock(*mutex);
+    count_available_mutex->unlock();
 
     while (true) {
         // NOTE: Because we use the predicate here, if our queue only has a
@@ -25,16 +112,23 @@ void hi_handler(
         condition_variable->wait(lock, [queue]{
             return (queue->size());
         });
-        // wait(lock);
 
         if (queue->size() <= 0) {
             continue;
         }
 
+        count_available_mutex->lock();
+        (*count_available)--;
+        count_available_mutex->unlock();
+
         auto a = queue->front();
         queue->pop_front();
         lock.unlock();
         a();
+
+        count_available_mutex->lock();
+        (*count_available)++;
+        count_available_mutex->unlock();
 
         lock.lock();
     }
@@ -44,10 +138,10 @@ void medium_handler(
     std::mutex *mutex,
     std::condition_variable *condition_variable,
     std::deque<std::function<void(void)>> *queue,
+    std::mutex *count_available_mutex,
+    int *count_available,
     int thread_id
 ) {
-    std::cout << "Starting medium thread " << thread_id << std::endl;
-
     std::unique_lock<std::mutex> lock(*mutex);
 
     while (true) {
@@ -58,16 +152,23 @@ void medium_handler(
         condition_variable->wait(lock, [queue]{
             return (queue->size());
         });
-        // wait(lock);
 
         if (queue->size() <= 0) {
             continue;
         }
 
+        count_available_mutex->lock();
+        (*count_available)--;
+        count_available_mutex->unlock();
+
         auto a = queue->front();
         queue->pop_front();
         lock.unlock();
         a();
+
+        count_available_mutex->lock();
+        (*count_available)++;
+        count_available_mutex->unlock();
 
         lock.lock();
     }
@@ -77,10 +178,10 @@ void low_handler(
     std::mutex *mutex,
     std::condition_variable *condition_variable,
     std::deque<std::function<void(void)>> *queue,
+    std::mutex *count_available_mutex,
+    int *count_available,
     int thread_id
 ) {
-    std::cout << "Starting low thread " << thread_id << std::endl;
-
     std::unique_lock<std::mutex> lock(*mutex);
 
     while (true) {
@@ -91,128 +192,67 @@ void low_handler(
         condition_variable->wait(lock, [queue]{
             return (queue->size());
         });
-        // wait(lock);
 
         if (queue->size() <= 0) {
             continue;
         }
+
+        count_available_mutex->lock();
+        (*count_available)--;
+        count_available_mutex->unlock();
 
         auto a = queue->front();
         queue->pop_front();
         lock.unlock();
         a();
 
+        count_available_mutex->lock();
+        (*count_available)++;
+        count_available_mutex->unlock();
+
         lock.lock();
     }
 }
 
 WorkQueue::WorkQueue(int dedicatedHigh, int dedicatedMediumPlus, int low) {
-    this->high_queue = new std::deque<std::function<void(void)>>();
-    this->medium_queue = new std::deque<std::function<void(void)>>();
-    this->low_queue = new std::deque<std::function<void(void)>>();
+    this->high = new WorkQueuePriority(
+        hi_handler,
+        dedicatedHigh
+    );
+    this->medium = new WorkQueuePriority(
+        medium_handler,
+        dedicatedMediumPlus
+    );
+    this->low = new WorkQueuePriority(
+        low_handler,
+        low
+    );
+}
 
-    for (int i = 0; i < dedicatedHigh; i++) {
-        this->hi_threads.emplace_back(
-            new std::thread(
-                std::bind(
-                    hi_handler,
-                    &this->high_mutex,
-                    &this->high_condition,
-                    this->high_queue,
-                    i
-                )
-            )
-        );
-    }
-
-    for (int i = 0; i < dedicatedMediumPlus; i++) {
-        this->medium_threads.emplace_back(
-            new std::thread(
-                std::bind(
-                    medium_handler,
-                    &this->medium_mutex,
-                    &this->medium_condition,
-                    this->medium_queue,
-                    i
-                )
-            )
-        );
-    }
-
-    for (int i = 0; i < low; i++) {
-        this->low_threads.emplace_back(
-            new std::thread(
-                std::bind(
-                    low_handler,
-                    &this->low_mutex,
-                    &this->low_condition,
-                    this->low_queue,
-                    i
-                )
-            )
-        );
-    }
+void WorkQueue::debug() {
+    std::cout << "High: " << this->high->debug() << " Medium: " << this->medium->debug() << " Low: " << this->low->debug() << std::endl;
 }
 
 void WorkQueue::addHighWork(  std::function<void(void)> work) {
-    std::unique_lock<std::mutex> lock(this->high_mutex);
+    bool foundHigh = this->high->addWork(work, false);
+    if (foundHigh) return;
 
-    this->high_queue->emplace_back(work);
-    lock.unlock();
+    bool foundMedium = this->medium->addWork(work, false);
+    if (foundMedium) return;
 
-    // Wake all the queues, so that lower priority threads can handle higher
-    // priority things. This does mean that we have a lot of spurious wake
-    // ups because we cannot easily tell if a higher priority thread will
-    // handle it.
+    bool foundLow = this->low->addWork(work, false);
+    if (foundLow) return;
 
-    // We might be able to find a better way to do this, but this "works" for
-    // now, it just sucks that we're putting in known pathological cases when
-    // the entire point of a work queue is optimization.
-    this->high_condition.notify_one();
-    this->medium_condition.notify_one();
-    this->low_condition.notify_one();
-}
+    std::cout << "Could not find a valid queue" << std::endl;
+    this->high->addWork(work, true);
 
-void WorkQueue::addMediumWork(  std::function<void(void)> work) {
-    std::unique_lock<std::mutex> lock(this->medium_mutex);
-
-    this->medium_queue->emplace_back(work);
-    lock.unlock();
-
-    // Wake all the queues, so that lower priority threads can handle higher
-    // priority things. This does mean that we have a lot of spurious wake
-    // ups because we cannot easily tell if a higher priority thread will
-    // handle it.
-
-    // We might be able to find a better way to do this, but this "works" for
-    // now, it just sucks that we're putting in known pathological cases when
-    // the entire point of a work queue is optimization.
-    this->medium_condition.notify_one();
-    this->low_condition.notify_one();
-}
-
-void WorkQueue::addLowWork(  std::function<void(void)> work) {
-    std::unique_lock<std::mutex> lock(this->low_mutex);
-
-    this->low_queue->emplace_back(work);
-    lock.unlock();
-
-    this->low_condition.notify_one();
+    // TODO: Nothing can handle immediately. I need to put this into the first
+    //       empty queue, but I cannot know what that is. So how do I handle
+    //       this?
 }
 
 WorkQueue::~WorkQueue() {
-    for (auto &thread : this->hi_threads) {
-        thread->join();
-        delete thread;
-    }
-
-    for (auto &thread : this->medium_threads) {
-        thread->join();
-        delete thread;
-    }
-
-    for (auto &thread : this->low_threads) {
-        thread->join();
-        delete thread;
-    }
+    delete this->high;
+    delete this->medium;
+    delete this->low;
 }

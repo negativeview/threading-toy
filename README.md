@@ -52,3 +52,5 @@ emplacement
 copy/move semantics
 
 best practices when it comes to naming, etc. I've been tainted by other-languages
+
+shared_ptr/unique_ptr/those thingies

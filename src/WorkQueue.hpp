@@ -7,27 +7,49 @@
 #include <thread>
 #include <vector>
 
+class WorkQueuePriority {
+    public:
+        WorkQueuePriority(
+            std::function<
+                void(
+                    std::mutex *,
+                    std::condition_variable *,
+                    std::deque<std::function<void(void)>> *,
+                    std::mutex *,
+                    int *,
+                    int
+                )
+            > handler,
+            int number
+        );
+
+        std::string debug();
+        void addWork(std::function<void(void)> work);
+        bool addWork(std::function<void(void)> work, bool force);
+
+        ~WorkQueuePriority();
+    protected:
+        std::vector<std::thread *> threads;
+        std::mutex queue_mutex;
+        std::deque<std::function<void(void)>> *queue;
+        std::condition_variable condition;
+
+        std::mutex count_available_mutex;
+        int count_available;
+    private:
+};
+
 class WorkQueue {
     public:
         WorkQueue(int dedicatedHigh, int dedicatedMediumPlus, int low);
 
-        void addHighWork(  std::function<void(void)> work);
-        void addMediumWork(std::function<void(void)> work);
-        void addLowWork(   std::function<void(void)> work);
+        void addHighWork(std::function<void(void)> work);
+        void debug();
 
         ~WorkQueue();
     protected:
-        std::deque<std::function<void(void)>> *high_queue;
-        std::deque<std::function<void(void)>> *medium_queue;
-        std::deque<std::function<void(void)>> *low_queue;
-        std::mutex high_mutex;
-        std::mutex medium_mutex;
-        std::mutex low_mutex;
-        std::condition_variable high_condition;
-        std::condition_variable medium_condition;
-        std::condition_variable low_condition;
-        std::vector<std::thread *> hi_threads;
-        std::vector<std::thread *> medium_threads;
-        std::vector<std::thread *> low_threads;
+        WorkQueuePriority *high;
+        WorkQueuePriority *medium;
+        WorkQueuePriority *low;
     private:
 };
