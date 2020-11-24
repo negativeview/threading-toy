@@ -20,16 +20,14 @@ WorkQueuePriority::WorkQueuePriority(
     this->count_available = number;
     for (int i = 0; i < number; i++) {
         this->threads.emplace_back(
-            new std::thread(
-                std::bind(
-                    handler,
-                    &this->queue_mutex,
-                    &this->condition,
-                    this->queue,
-                    &this->count_available_mutex,
-                    &this->count_available,
-                    i
-                )
+            std::bind(
+                handler,
+                &this->queue_mutex,
+                &this->condition,
+                this->queue,
+                &this->count_available_mutex,
+                &this->count_available,
+                i
             )
         );
     }
@@ -46,24 +44,26 @@ std::string WorkQueuePriority::debug() {
 }
 
 bool WorkQueuePriority::addWork(std::function<void(void)> work, bool force) {
+    this->queue_mutex.lock();
     this->count_available_mutex.lock();
+
     if (this->count_available > 0) {
-        this->queue_mutex.lock();
         if (this->queue->size() < this->count_available) {
-            this->queue_mutex.unlock();
             this->count_available_mutex.unlock();
+            this->queue_mutex.unlock();
 
             this->addWork(work);
 
             return true;
         }
 
-        this->queue_mutex.unlock();
         this->count_available_mutex.unlock();
+        this->queue_mutex.unlock();
 
         return false;
     }
     this->count_available_mutex.unlock();
+    this->queue_mutex.unlock();
 
     if (force) {
         this->addWork(work);
@@ -73,18 +73,16 @@ bool WorkQueuePriority::addWork(std::function<void(void)> work, bool force) {
 }
 
 void WorkQueuePriority::addWork(std::function<void(void)> work) {
-    std::unique_lock<std::mutex> lock(this->queue_mutex);
-
+    this->queue_mutex.lock();
     this->queue->emplace_back(work);
-    lock.unlock();
+    this->queue_mutex.unlock();
 
     this->condition.notify_one();
 }
 
 WorkQueuePriority::~WorkQueuePriority() {
-    for (auto &thread: this->threads) {
-        thread->join();
-        delete thread;
+    for (std::thread &thread : this->threads) {
+        thread.join();
     }
 }
 
@@ -232,7 +230,7 @@ void WorkQueue::debug() {
     std::cout << "High: " << this->high->debug() << " Medium: " << this->medium->debug() << " Low: " << this->low->debug() << std::endl;
 }
 
-void WorkQueue::addHighWork(  std::function<void(void)> work) {
+void WorkQueue::addHighWork(std::function<void(void)> work) {
     bool foundHigh = this->high->addWork(work, false);
     if (foundHigh) return;
 

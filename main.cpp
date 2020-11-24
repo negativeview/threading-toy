@@ -7,9 +7,7 @@
 #include "src/WorkQueue.hpp"
 
 void foo2() {
-    std::cout << "Work Starting" << std::endl;
     std::this_thread::sleep_for(std::chrono::seconds(10));
-    std::cout << "Work Ending" << std::endl;
 }
 
 int main() {

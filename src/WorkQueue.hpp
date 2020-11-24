@@ -29,7 +29,7 @@ class WorkQueuePriority {
 
         ~WorkQueuePriority();
     protected:
-        std::vector<std::thread *> threads;
+        std::vector<std::thread> threads;
         std::mutex queue_mutex;
         std::deque<std::function<void(void)>> *queue;
         std::condition_variable condition;
